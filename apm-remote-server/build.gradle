@@ -1,0 +1,24 @@
+plugins {
+    id 'java'
+}
+
+group = 'org.example'
+version = '1.0-SNAPSHOT'
+
+repositories {
+    mavenCentral()
+}
+
+apply from: "E:/Java/GradleScripts/build-base.gradle"
+applyGlobalScript("/Dependencies.gradle")
+
+dependencies {
+    compileOnly("io.netty:netty-all:4.1.25.Final")
+
+    implementation localStorage("me.gb2022.commons-event")
+    implementation localStorage('me.gb2022.commons-container')
+}
+
+test {
+    useJUnitPlatform()
+}
