@@ -1,0 +1,15 @@
+plugins {
+    id 'java'
+}
+
+group = 'me.gb2022'
+version = ''
+
+apply from: "E:/Java/GradleScripts/build-base.gradle"
+applyGlobalScript("Publish/LocalStorage.gradle")
+applyGlobalScript("/Dependencies.gradle")
+
+dependencies {
+    implementation localStorage("me.gb2022.commons-event")
+    implementation localStorage('me.gb2022.commons-container')
+}

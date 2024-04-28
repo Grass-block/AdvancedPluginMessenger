@@ -42,7 +42,7 @@ public interface Messenger {
 
     static String queryKickMessage(String playerName, String defaultMessage, String locale) {
         return Messenger.queryMapped(FETCH_KICK_MESSAGE, (map) -> {
-            map.put("default", defaultMessage);
+            map.put("message", defaultMessage);
             map.put("player", playerName);
             map.put("locale", locale);
         }).getProperty("message", String.class);

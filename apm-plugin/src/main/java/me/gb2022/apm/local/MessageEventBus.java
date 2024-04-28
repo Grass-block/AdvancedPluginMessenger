@@ -17,7 +17,7 @@ public class MessageEventBus extends EventBus<PluginMessageHandler, PluginMessag
     }
 
     @Override
-    public void execute(List<PluginMessageHandlerInstance> list, Object o, Object o1) {
+    public void execute(List<PluginMessageHandlerInstance> list, Object o, Object[] o1) {
         for (PluginMessageHandlerInstance instance : list) {
             instance.call(o, o1);
         }
