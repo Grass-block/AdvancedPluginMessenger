@@ -6,16 +6,16 @@ import me.gb2022.commons.event.HandlerInstance;
 import java.lang.reflect.Method;
 import java.util.List;
 
-public class RemoteMessageEventBus extends EventBus<RemoteMessageHandler, RemoteMessageEventBus.RemoteMessageHandlerInstance> {
+public class RemoteMessageEventBus extends EventBus<RemoteEventHandler, RemoteMessageEventBus.RemoteMessageHandlerInstance> {
 
     @Override
-    public RemoteMessageHandlerInstance createHandlerInstance(Method method, RemoteMessageHandler remoteMessageHandler, Object o) {
+    public RemoteMessageHandlerInstance createHandlerInstance(Method method, RemoteEventHandler remoteMessageHandler, Object o) {
         return new RemoteMessageHandlerInstance(o, method);
     }
 
     @Override
-    public Class<RemoteMessageHandler> getHandlerAnnotationClass() {
-        return RemoteMessageHandler.class;
+    public Class<RemoteEventHandler> getHandlerAnnotationClass() {
+        return RemoteEventHandler.class;
     }
 
     @Override
@@ -30,7 +30,7 @@ public class RemoteMessageEventBus extends EventBus<RemoteMessageHandler, Remote
 
         public RemoteMessageHandlerInstance(Object handler, Method method) {
             super(handler, method);
-            this.channel = method.getAnnotation(RemoteMessageHandler.class).value();
+            this.channel = method.getAnnotation(RemoteEventHandler.class).value();
         }
 
         @Override

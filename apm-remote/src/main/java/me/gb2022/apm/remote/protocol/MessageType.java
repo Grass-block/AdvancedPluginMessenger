@@ -1,17 +1,28 @@
 package me.gb2022.apm.remote.protocol;
 
 public enum MessageType {
-    MESSAGE(0x0),
-    QUERY(0x1),
-    BROADCAST(0x2);
+    LOGIN(0),
+    LOGIN_RESULT(1),
+    LOGOUT(2),
+    MESSAGE(3),
+    QUERY(4),
+    QUERY_RESULT(5);
 
-    final int id;
+    public final int id;
 
     MessageType(int id) {
         this.id = id;
     }
 
-    public byte getId() {
-        return (byte) id;
+    public static MessageType of(byte b) {
+        return switch (b) {
+            case 0 -> LOGIN;
+            case 1 -> LOGIN_RESULT;
+            case 2 -> LOGOUT;
+            case 3 -> MESSAGE;
+            case 4 -> QUERY;
+            case 5 -> QUERY_RESULT;
+            default -> throw new IllegalStateException("Unexpected value: " + b);
+        };
     }
 }

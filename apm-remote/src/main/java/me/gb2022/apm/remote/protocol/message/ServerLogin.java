@@ -2,6 +2,7 @@ package me.gb2022.apm.remote.protocol.message;
 
 import io.netty.buffer.ByteBuf;
 import me.gb2022.apm.remote.protocol.BufferUtil;
+import me.gb2022.apm.remote.protocol.MessageType;
 import me.gb2022.commons.math.SHA;
 
 import java.nio.charset.StandardCharsets;
@@ -32,8 +33,8 @@ public class ServerLogin extends Message {
     }
 
     @Override
-    public EnumMessages getType() {
-        return EnumMessages.LOGIN;
+    public MessageType getType() {
+        return MessageType.LOGIN;
     }
 
     public String getId() {

@@ -1,5 +1,4 @@
 rootProject.name = 'AdvancedPluginMessenger'
-include 'apm-remote-client'
 
 include 'apm-remote'
 include 'apm-plugin'

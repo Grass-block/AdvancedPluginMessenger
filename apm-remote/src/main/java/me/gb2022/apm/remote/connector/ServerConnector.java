@@ -6,7 +6,10 @@ import io.netty.buffer.ByteBufAllocator;
 import io.netty.channel.*;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioSocketChannel;
-import me.gb2022.apm.remote.object.Server;
+import me.gb2022.apm.remote.Server;
+import me.gb2022.apm.remote.event.local.ClientConnectorLoginFailedEvent;
+import me.gb2022.apm.remote.event.local.ConnectorDisconnectEvent;
+import me.gb2022.apm.remote.protocol.MessageType;
 import me.gb2022.apm.remote.protocol.NettyChannelInitializer;
 import me.gb2022.apm.remote.protocol.message.*;
 
@@ -40,6 +43,7 @@ public class ServerConnector extends RemoteConnector {
     }
 
     public void disconnect() {
+        callEvent(new ConnectorDisconnectEvent(this));
         this.group.shutdownGracefully();
     }
 
@@ -64,7 +68,7 @@ public class ServerConnector extends RemoteConnector {
         @Override
         public void channelRead(ChannelHandlerContext ctx, Object msg) {
             ByteBuf raw = ((ByteBuf) msg);
-            EnumMessages type = EnumMessages.of(raw.readByte());
+            MessageType type = MessageType.of(raw.readByte());
             switch (type) {
                 case LOGIN_RESULT -> onLoginResult(new ServerLoginResult(raw));
                 case LOGIN -> onServerJoin(new ServerLogin(raw));
@@ -73,34 +77,34 @@ public class ServerConnector extends RemoteConnector {
             }
         }
 
-        public void onLoginResult(ServerLoginResult message){
+        public void onLoginResult(ServerLoginResult message) {
             if (message.isSuccess()) {
                 logger.info("successfully logged in to remote server(%s)".formatted(getBinding()));
                 for (String s : message.getObjects()) {
-                    addServer(s, new Server(s, ServerConnector.this));
-                    logger.info("find remote server: %s".formatted(s));
+                    Server svr = new Server(s, ServerConnector.this);
+                    addServer(s, svr);
                 }
 
                 ready();
             } else {
                 logger.info("failed logging in to remote server(%s)".formatted(getBinding()));
+                callEvent(new ClientConnectorLoginFailedEvent(ServerConnector.this));
                 disconnect();
             }
         }
 
-        public void onMessage(ServerMessage sm){
+        public void onMessage(ServerMessage sm) {
             handleMessage(sm, (_msg) -> {
             });
         }
 
-        public void onServerJoin(ServerLogin message){
-            addServer(message.getId(), new Server(message.getId(), ServerConnector.this));
-            logger.info("remote server joined: %s".formatted(message.getId()));
+        public void onServerJoin(ServerLogin message) {
+            Server svr = new Server(message.getId(), ServerConnector.this);
+            addServer(message.getId(), svr);
         }
 
-        public void onServerLeft(ServerLogout message){
+        public void onServerLeft(ServerLogout message) {
             removeServer(message.getId());
-            logger.info("remote server left: %s".formatted(message.getId()));
         }
     }
 }

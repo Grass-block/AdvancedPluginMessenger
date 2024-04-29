@@ -2,6 +2,7 @@ package me.gb2022.apm.remote.protocol.message;
 
 import io.netty.buffer.ByteBuf;
 import me.gb2022.apm.remote.protocol.BufferUtil;
+import me.gb2022.apm.remote.protocol.MessageType;
 
 public class ServerLogout extends Message {
     private final String id;
@@ -24,7 +25,7 @@ public class ServerLogout extends Message {
     }
 
     @Override
-    public EnumMessages getType() {
-        return EnumMessages.LOGOUT;
+    public MessageType getType() {
+        return MessageType.LOGOUT;
     }
 }

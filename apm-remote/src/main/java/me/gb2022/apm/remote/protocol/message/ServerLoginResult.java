@@ -2,6 +2,7 @@ package me.gb2022.apm.remote.protocol.message;
 
 import io.netty.buffer.ByteBuf;
 import me.gb2022.apm.remote.protocol.BufferUtil;
+import me.gb2022.apm.remote.protocol.MessageType;
 
 public class ServerLoginResult extends Message {
     private final boolean success;
@@ -33,8 +34,8 @@ public class ServerLoginResult extends Message {
     }
 
     @Override
-    public EnumMessages getType() {
-        return EnumMessages.LOGIN_RESULT;
+    public MessageType getType() {
+        return MessageType.LOGIN_RESULT;
     }
 
     public boolean isSuccess() {

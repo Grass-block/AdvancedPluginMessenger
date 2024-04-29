@@ -9,7 +9,9 @@ import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
-import me.gb2022.apm.remote.object.Server;
+import me.gb2022.apm.remote.Server;
+import me.gb2022.apm.remote.event.local.ConnectorDisconnectEvent;
+import me.gb2022.apm.remote.protocol.MessageType;
 import me.gb2022.apm.remote.protocol.NettyChannelInitializer;
 import me.gb2022.apm.remote.protocol.message.*;
 import me.gb2022.commons.container.MultiMap;
@@ -54,6 +56,7 @@ public class ProxyConnector extends RemoteConnector {
         for (String s : new HashSet<>(this.contexts.keySet())) {
             this.disconnect(s);
         }
+        callEvent(new ConnectorDisconnectEvent(this));
 
         this.bossGroup.shutdownGracefully();
         this.workerGroup.shutdownGracefully();
@@ -61,6 +64,7 @@ public class ProxyConnector extends RemoteConnector {
 
 
     public void disconnect(String id) {
+        this.removeServer(id);
         this.contexts.get(id).disconnect();
     }
 
@@ -74,7 +78,6 @@ public class ProxyConnector extends RemoteConnector {
         msg.writeData(buffer);
         this.contexts.get(id).writeAndFlush(buffer);
     }
-
 
     private class Handler extends ChannelInboundHandlerAdapter {
         @Override
@@ -95,7 +98,7 @@ public class ProxyConnector extends RemoteConnector {
         @Override
         public void channelRead(ChannelHandlerContext ctx, Object msg) {
             ByteBuf raw = ((ByteBuf) msg);
-            EnumMessages type = EnumMessages.of(raw.readByte());
+            MessageType type = MessageType.of(raw.readByte());
             switch (type) {
                 case LOGIN -> onLoginRequest(new ServerLogin(raw), ctx);
                 case MESSAGE, QUERY, QUERY_RESULT -> onMessage(new ServerMessage(type, raw));
