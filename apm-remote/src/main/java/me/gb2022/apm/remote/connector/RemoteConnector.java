@@ -2,65 +2,62 @@ package me.gb2022.apm.remote.connector;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
-import me.gb2022.apm.remote.APMLoggerManager;
-import me.gb2022.apm.remote.Server;
+import io.netty.channel.ChannelHandlerContext;
 import me.gb2022.apm.remote.event.RemoteEventHandler;
 import me.gb2022.apm.remote.event.RemoteMessageEventBus;
-import me.gb2022.apm.remote.event.local.ConnectorReadyEvent;
-import me.gb2022.apm.remote.event.remote.RemoteMessageEvent;
-import me.gb2022.apm.remote.event.remote.RemoteQueryEvent;
-import me.gb2022.apm.remote.event.remote.ServerJoinEvent;
-import me.gb2022.apm.remote.event.remote.ServerQuitEvent;
-import me.gb2022.apm.remote.protocol.MessageType;
-import me.gb2022.apm.remote.protocol.message.ServerMessage;
+import me.gb2022.apm.remote.event.ServerListener;
+import me.gb2022.apm.remote.listen.EventChannel;
+import me.gb2022.apm.remote.protocol.packet.Packet;
+import me.gb2022.apm.remote.protocol.packet.data.DataPacket;
+import me.gb2022.apm.remote.protocol.packet.data.RawPacket;
+import me.gb2022.apm.remote.protocol.packet.data.StringPacket;
+import me.gb2022.apm.remote.util.MessageVerification;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.net.InetSocketAddress;
 import java.util.*;
 import java.util.function.Consumer;
-import java.util.logging.Logger;
+import java.util.function.Function;
 
 public abstract class RemoteConnector {
+    public static final String BROADCAST_ID = "_apm://broadcast";
     protected final Logger logger;
-
+    protected final ServerListener listener;
+    final EventChannel eventChannel = new EventChannel();
+    private final MessageVerification verification;
     private final RemoteMessageEventBus eventBus = new RemoteMessageEventBus();
-
-    private final HashMap<String, Server> servers = new HashMap<>();
     private final InetSocketAddress binding;
-    private final String id;
+    private final String identifier;
+    private final Map<String, ByteBuf> cache = new HashMap<>();
+    private final Set<String> groupServers = new HashSet<>();
+    boolean debug;
     private boolean ready = false;
 
-    protected RemoteConnector(InetSocketAddress binding, String id) {
+    protected RemoteConnector(InetSocketAddress binding, byte[] key, String identifier, ServerListener listener) {
+        this.verification = new MessageVerification(MessageVerification.Mode.AES_ECB, key);
         this.binding = binding;
-        this.id = id;
-        this.logger = APMLoggerManager.createLogger("APM/" + this.getClass().getSimpleName() + "[%s]".formatted(id));
+        this.identifier = identifier;
+        this.logger = LogManager.getLogger(toString());
+        this.listener = listener;
+    }
+
+    public MessageVerification getVerification() {
+        return verification;
+    }
+
+    public ServerListener getListener() {
+        return listener;
+    }
+
+    public String getIdentifier() {
+        return this.identifier;
     }
 
     public InetSocketAddress getBinding() {
         return binding;
     }
 
-    public Server getServer(String id) {
-        return this.servers.get(id);
-    }
-
-    public void addServer(String id, Server server) {
-        this.servers.put(id, server);
-        callEvent(new ServerJoinEvent(this, server));
-    }
-
-    public void removeServer(String id) {
-        Server svr = getServer(id);
-        this.servers.remove(id);
-        callEvent(new ServerQuitEvent(this, svr));
-    }
-
-    public String getId() {
-        return this.id;
-    }
-
-    public Map<String, Server> getServers() {
-        return this.servers;
-    }
 
     public void waitForReady() {
         while (!this.ready) {
@@ -68,64 +65,193 @@ public abstract class RemoteConnector {
         }
     }
 
-    void ready() {
+    protected void ready() {
         this.ready = true;
-        this.callEvent(new ConnectorReadyEvent(this));
+
+        this.eventChannel.connectorReady(this);
     }
 
-    public abstract void sendMessage(ServerMessage message);
+    public final void debug(boolean debug) {
+        this.debug = debug;
+    }
 
+
+    public abstract void open();
+
+    public abstract void close();
+
+
+    //servers
     public Set<String> getServerInGroup() {
-        Set<String> set = new HashSet<>(getServers().keySet());
-        set.add(this.getId());
+        Set<String> set = new HashSet<>(this.groupServers);
+        set.add(this.getIdentifier());
         return set;
     }
 
-    public void handleMessage(ServerMessage message, Consumer<ServerMessage> notMatch) {
-        if (!Objects.equals(message.getReceiver(), this.id)) {
-            notMatch.accept(message);
-            return;
-        }
-
-        Server sender = this.getServer(message.getSender());
-        ByteBuf data = message.getData();
-        String channel = message.getChannel();
-
-        switch (message.getType()) {
-            case MESSAGE -> this.callEvent(new RemoteMessageEvent(this, sender, data), channel);
-            case QUERY -> {
-                ByteBuf result = ByteBufAllocator.DEFAULT.buffer();
-                this.eventBus.callEvent(new RemoteQueryEvent(this, sender, data, result), channel);
-                if (result.writerIndex() == 0) {
-                    return;
-                }
-                sendMessage(new ServerMessage(MessageType.QUERY_RESULT, this.getId(), message.getSender(), channel, message.getUuid(), result));
-            }
-            case QUERY_RESULT -> this.getServer(message.getSender()).handleRemoteQueryResult(message.getUuid(), data);
-        }
+    public Set<String> getServers() {
+        return this.groupServers;
     }
 
-    public void addMessageHandler(Object handler) {
-        this.eventBus.registerEventListener(handler);
+    public boolean existServer(String id) {
+        return this.groupServers.contains(id);
     }
 
-    public void removeMessageHandler(Object handler) {
-        this.eventBus.unregisterEventListener(handler);
+    protected void addServer(String id) {
+        this.groupServers.add(id);
+        this.listener.onServerJoin(this, id);
     }
+
+    protected void removeServer(String id) {
+        this.groupServers.remove(id);
+        this.listener.onServerLeave(this, id);
+    }
+
 
     public void callEvent(Object event) {
         try {
             this.eventBus.callEvent(event, RemoteEventHandler.LISTENER_GLOBAL_EVENT_CHANNEL);
         } catch (Exception e) {
-            e.printStackTrace();
+            this.logger.catching(e);
         }
     }
 
-    public void callEvent(Object event, String channel) {
-        try {
-            this.eventBus.callEvent(event, channel);
-        } catch (Exception e) {
-            e.printStackTrace();
+
+    @Override
+    public String toString() {
+        return "%s(%s)".formatted(this.getClass().getSimpleName(), this.identifier);
+    }
+
+
+    public final void receivePacket(ByteBuf buffer, ChannelHandlerContext ctx) {
+        buffer.readerIndex(0);
+
+        var sign = new byte[buffer.readByte()];
+        var data = new byte[buffer.readInt()];
+
+        buffer.readBytes(sign);
+        buffer.readBytes(data);
+
+        buffer.readerIndex(0);
+        buffer.writerIndex(0);
+
+        if (!this.verification.unpack(buffer, sign, data)) {
+            return;
+        }
+
+        var packet = Packet.Registry.REGISTRY.decode(buffer);
+
+        handlePacket(packet, ctx);
+    }
+
+    public final void sendPacket(Packet packet, ChannelHandlerContext... ctx) {
+        if (ctx.length == 0 || ctx[0] == null) {
+            return;
+        }
+
+        var buffer = ctx[0].alloc().buffer();
+        Packet.Registry.REGISTRY.encode(packet, buffer);
+
+        this.verification.pack(buffer);
+
+        for (var c : ctx) {
+            c.writeAndFlush(buffer.copy());
+        }
+
+        buffer.release();
+    }
+
+    public final String sendPacket(Function<String, DataPacket> generator) {
+        return sendPacket(generator.apply(this.getIdentifier()));
+    }
+
+    public final String sendPacket(DataPacket packet) {
+        var uuid = UUID.randomUUID().toString();
+
+        packet.fillSenderInformation(uuid, this.getIdentifier());
+
+        this.sendPacket(packet, getPacketDest(packet.getReceiver()));
+        return uuid;
+    }
+
+    public final String sendMessage(String channel, String receiver, Consumer<ByteBuf> writer) {
+        return sendPacket(new RawPacket(channel, receiver, writer));
+    }
+
+    public final String sendMessage(String channel, String receiver, ByteBuf message) {
+        return sendPacket(new RawPacket(channel, receiver, message));
+    }
+
+    public final String sendMessage(String channel, String receiver, String message) {
+        return sendPacket(new StringPacket(channel, receiver, message));
+    }
+
+    public abstract void handlePacket(Packet packet, ChannelHandlerContext ctx);
+
+    public void handleSuspectedPacket(Packet packet, ChannelHandlerContext ctx) {
+    }
+
+    public abstract ChannelHandlerContext getPacketDest(String receiver);
+
+    protected void handleDataPacket(DataPacket packet) {
+        if (!Objects.equals(packet.getReceiver(), this.getIdentifier())) {
+            return;
+        }
+
+        if (packet instanceof RawPacket p) {
+            var bytebuf = ByteBufAllocator.DEFAULT.buffer();
+            bytebuf.writeBytes(p.getMessage());
+            this.eventChannel.messageReceived(this, p.getUuid(), p.getChannel(), p.getSender(), bytebuf);
+            bytebuf.release();
+            return;
+        }
+
+        if (packet instanceof StringPacket p) {
+            this.eventChannel.messageReceived(this, p.getUuid(), p.getChannel(), p.getSender(), p.getMessage());
+            return;
+        }
+
+        this.logger.info("unhandled data packet: {}", packet);
+    }
+
+
+    public EventChannel getEventChannel() {
+        return eventChannel;
+    }
+
+    public static final class ServerQuery {
+        private final RemoteConnector provider;
+        private final String uuid;
+        private Runnable timeOut;
+        private Consumer<ByteBuf> result;
+        private long timeOutMillSeconds;
+
+        public ServerQuery(RemoteConnector provider, String uuid) {
+            this.provider = provider;
+            this.uuid = uuid;
+        }
+
+        public ServerQuery timeout(long mills, Runnable command) {
+            this.timeOut = command;
+            this.timeOutMillSeconds = mills;
+            return this;
+        }
+
+        public ServerQuery result(Consumer<ByteBuf> result) {
+            this.result = result;
+            return this;
+        }
+
+        public void sync() {
+            long start = System.currentTimeMillis();
+            while (!this.provider.cache.containsKey(this.uuid)) {
+                if (System.currentTimeMillis() - start > this.timeOutMillSeconds) {
+                    this.timeOut.run();
+                    return;
+                }
+                Thread.yield();
+            }
+            this.result.accept(this.provider.cache.get(this.uuid));
+            this.provider.cache.remove(this.uuid);
         }
     }
 }

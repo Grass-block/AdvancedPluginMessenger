@@ -2,8 +2,8 @@ plugins {
     id 'java'
 }
 
-group = 'org.example'
-version = '1.0-SNAPSHOT'
+group = 'me.gb2022'
+version = ''
 
 repositories {
     mavenCentral()
@@ -12,22 +12,30 @@ repositories {
 apply from: "E:/Java/GradleScripts/build-base.gradle"
 applyGlobalScript("/Dependencies.gradle")
 applyGlobalScript("Publish/LocalStorage.gradle")
+applyGlobalScript("Publish/ProjectOutput.gradle")
+
+void dependencies2(Closure _){
+
+}
+
+dependencies2 {
+    implementation 'io.netty:netty-all:4.1.100.Final'
+    implementation "org.apache.logging.log4j:log4j-core:2.8.1"
+    implementation localStorage("me.gb2022.commons-event")
+    implementation localStorage("me.gb2022.commons-container")
+    implementation localStorage("me.gb2022.commons-math")
+    implementation localStorage("me.gb2022.commons-crypto")
+    implementation localStorage("me.gb2022.commons-nbt")
+}
 
 dependencies {
     compileOnly 'io.netty:netty-all:4.1.100.Final'
-    testImplementation 'io.netty:netty-all:4.1.100.Final'
-
+    compileOnly "org.apache.logging.log4j:log4j-core:2.8.1"
     compileOnly localStorage("me.gb2022.commons-event")
-    testImplementation localStorage("me.gb2022.commons-event")
-
     compileOnly localStorage("me.gb2022.commons-container")
-    testImplementation localStorage("me.gb2022.commons-container")
-
     compileOnly localStorage("me.gb2022.commons-math")
-    testImplementation localStorage("me.gb2022.commons-math")
-
     compileOnly localStorage("me.gb2022.commons-crypto")
-    testImplementation localStorage("me.gb2022.commons-crypto")
+    compileOnly localStorage("me.gb2022.commons-nbt")
 }
 
 test {

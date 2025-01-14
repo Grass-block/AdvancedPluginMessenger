@@ -1,4 +1,4 @@
-package me.gb2022.apm.remote.protocol;
+package me.gb2022.apm.remote.util;
 
 import io.netty.buffer.ByteBuf;
 

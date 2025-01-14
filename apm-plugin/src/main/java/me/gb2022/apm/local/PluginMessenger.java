@@ -7,7 +7,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
 
-public interface Messenger {
+public interface PluginMessenger {
     String FETCH_KICK_MESSAGE = "quark:kick-message-fetch";
 
     MessageEventBus EVENT_BUS = new MessageEventBus();
@@ -41,7 +41,7 @@ public interface Messenger {
     }
 
     static String queryKickMessage(String playerName, String defaultMessage, String locale) {
-        return Messenger.queryMapped(FETCH_KICK_MESSAGE, (map) -> {
+        return PluginMessenger.queryMapped(FETCH_KICK_MESSAGE, (map) -> {
             map.put("message", defaultMessage);
             map.put("player", playerName);
             map.put("locale", locale);

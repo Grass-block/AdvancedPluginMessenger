@@ -1,4 +1,4 @@
-package me.gb2022.apm.remote.protocol;
+package me.gb2022.apm.remote.protocol.message;
 
 public enum MessageType {
     LOGIN(0),

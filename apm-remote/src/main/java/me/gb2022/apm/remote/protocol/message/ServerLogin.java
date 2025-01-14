@@ -1,8 +1,7 @@
 package me.gb2022.apm.remote.protocol.message;
 
 import io.netty.buffer.ByteBuf;
-import me.gb2022.apm.remote.protocol.BufferUtil;
-import me.gb2022.apm.remote.protocol.MessageType;
+import me.gb2022.apm.remote.util.BufferUtil;
 import me.gb2022.commons.math.SHA;
 
 import java.nio.charset.StandardCharsets;
@@ -39,5 +38,13 @@ public class ServerLogin extends Message {
 
     public String getId() {
         return id;
+    }
+
+
+    public byte[] encrypt(byte[] key) {
+        String k = new String(key, StandardCharsets.UTF_8);
+        long salt = System.currentTimeMillis() / 30;
+
+        return SHA.getSHA512(k + salt, true).getBytes(StandardCharsets.UTF_8);
     }
 }

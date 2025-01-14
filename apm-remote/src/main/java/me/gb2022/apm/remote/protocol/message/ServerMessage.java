@@ -2,13 +2,12 @@ package me.gb2022.apm.remote.protocol.message;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
-import me.gb2022.apm.remote.protocol.BufferUtil;
-import me.gb2022.apm.remote.protocol.MessageType;
+import me.gb2022.apm.remote.util.BufferUtil;
 
 public class ServerMessage extends Message {
     private final MessageType dataType;
     private final String sender;
-    private final String receiver;
+    private String receiver;
     private final String channel;
     private final String uuid;
     private final ByteBuf data;
@@ -19,7 +18,8 @@ public class ServerMessage extends Message {
         this.receiver = receiver;
         this.channel = channel;
         this.uuid = uuid;
-        this.data = data;
+
+        this.data = data.copy();
     }
 
     public ServerMessage(MessageType type, ByteBuf data) {
@@ -35,16 +35,16 @@ public class ServerMessage extends Message {
     }
 
 
-    public MessageType getDataType() {
-        return dataType;
-    }
-
     public String getSender() {
         return sender;
     }
 
     public String getReceiver() {
         return receiver;
+    }
+
+    public void setReceiver(String receiver) {
+        this.receiver = receiver;
     }
 
     public String getChannel() {
@@ -77,6 +77,6 @@ public class ServerMessage extends Message {
 
     @Override
     public String toString() {
-        return "ServerMessage{flow=%s->%s,ch=%s,id=%s}".formatted(this.sender, this.receiver, this.channel, this.uuid);
+        return "ServerMessage{flow=%s->%s,ch=%s,id=%s,data=%s}".formatted(this.sender, this.receiver, this.channel, this.uuid, this.data.writerIndex());
     }
 }
