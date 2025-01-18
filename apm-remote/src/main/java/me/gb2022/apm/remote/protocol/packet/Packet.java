@@ -1,10 +1,6 @@
 package me.gb2022.apm.remote.protocol.packet;
 
 import io.netty.buffer.ByteBuf;
-import me.gb2022.apm.remote.protocol.packet.data.NBTPacket;
-import me.gb2022.apm.remote.protocol.packet.data.RawPacket;
-import me.gb2022.apm.remote.protocol.packet.data.StringPacket;
-import me.gb2022.apm.remote.protocol.packet.protocol.*;
 
 import java.lang.reflect.InvocationTargetException;
 import java.util.ArrayList;
@@ -32,9 +28,7 @@ public interface Packet {
             register(0x03, P_ServerLogin.class);
             register(0x04, P_ServerLogout.class);
 
-            register(0x10, RawPacket.class);
-            register(0x11, StringPacket.class);
-            register(0x12, NBTPacket.class);
+            register(0x10, D_Raw.class);
         }
 
         public void register(int id, Class<? extends Packet> packet) {

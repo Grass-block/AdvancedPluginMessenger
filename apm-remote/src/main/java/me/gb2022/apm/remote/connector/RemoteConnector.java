@@ -3,51 +3,41 @@ package me.gb2022.apm.remote.connector;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
 import io.netty.channel.ChannelHandlerContext;
-import me.gb2022.apm.remote.event.RemoteEventHandler;
-import me.gb2022.apm.remote.event.RemoteMessageEventBus;
-import me.gb2022.apm.remote.event.ServerListener;
-import me.gb2022.apm.remote.listen.EventChannel;
+import me.gb2022.apm.remote.protocol.packet.D_DataPacket;
+import me.gb2022.apm.remote.protocol.packet.D_Raw;
 import me.gb2022.apm.remote.protocol.packet.Packet;
-import me.gb2022.apm.remote.protocol.packet.data.DataPacket;
-import me.gb2022.apm.remote.protocol.packet.data.RawPacket;
-import me.gb2022.apm.remote.protocol.packet.data.StringPacket;
 import me.gb2022.apm.remote.util.MessageVerification;
-import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.net.InetSocketAddress;
-import java.util.*;
+import java.util.HashSet;
+import java.util.Objects;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.*;
 import java.util.function.Consumer;
-import java.util.function.Function;
 
 public abstract class RemoteConnector {
     public static final String BROADCAST_ID = "_apm://broadcast";
-    protected final Logger logger;
-    protected final ServerListener listener;
-    final EventChannel eventChannel = new EventChannel();
+    protected final ConnectorEventChannel eventChannel = new ConnectorEventChannel();
+    protected final Set<String> groupServers = new HashSet<>();
+    protected final String identifier;
+    private final Set<String> sentMessages = new HashSet<>();
     private final MessageVerification verification;
-    private final RemoteMessageEventBus eventBus = new RemoteMessageEventBus();
     private final InetSocketAddress binding;
-    private final String identifier;
-    private final Map<String, ByteBuf> cache = new HashMap<>();
-    private final Set<String> groupServers = new HashSet<>();
     boolean debug;
     private boolean ready = false;
 
-    protected RemoteConnector(InetSocketAddress binding, byte[] key, String identifier, ServerListener listener) {
+    protected RemoteConnector(InetSocketAddress binding, byte[] key, String identifier) {
         this.verification = new MessageVerification(MessageVerification.Mode.AES_ECB, key);
         this.binding = binding;
         this.identifier = identifier;
-        this.logger = LogManager.getLogger(toString());
-        this.listener = listener;
     }
+
+    public abstract Logger getLogger();
 
     public MessageVerification getVerification() {
         return verification;
-    }
-
-    public ServerListener getListener() {
-        return listener;
     }
 
     public String getIdentifier() {
@@ -67,7 +57,6 @@ public abstract class RemoteConnector {
 
     protected void ready() {
         this.ready = true;
-
         this.eventChannel.connectorReady(this);
     }
 
@@ -78,7 +67,9 @@ public abstract class RemoteConnector {
 
     public abstract void open();
 
-    public abstract void close();
+    public void close() {
+        this.ready = false;
+    }
 
 
     //servers
@@ -86,39 +77,6 @@ public abstract class RemoteConnector {
         Set<String> set = new HashSet<>(this.groupServers);
         set.add(this.getIdentifier());
         return set;
-    }
-
-    public Set<String> getServers() {
-        return this.groupServers;
-    }
-
-    public boolean existServer(String id) {
-        return this.groupServers.contains(id);
-    }
-
-    protected void addServer(String id) {
-        this.groupServers.add(id);
-        this.listener.onServerJoin(this, id);
-    }
-
-    protected void removeServer(String id) {
-        this.groupServers.remove(id);
-        this.listener.onServerLeave(this, id);
-    }
-
-
-    public void callEvent(Object event) {
-        try {
-            this.eventBus.callEvent(event, RemoteEventHandler.LISTENER_GLOBAL_EVENT_CHANNEL);
-        } catch (Exception e) {
-            this.logger.catching(e);
-        }
-    }
-
-
-    @Override
-    public String toString() {
-        return "%s(%s)".formatted(this.getClass().getSimpleName(), this.identifier);
     }
 
 
@@ -160,98 +118,167 @@ public abstract class RemoteConnector {
         buffer.release();
     }
 
-    public final String sendPacket(Function<String, DataPacket> generator) {
-        return sendPacket(generator.apply(this.getIdentifier()));
+    public final String sendPacket(D_DataPacket packet) {
+        return sendPacket(packet, UUID.randomUUID().toString());
     }
 
-    public final String sendPacket(DataPacket packet) {
-        var uuid = UUID.randomUUID().toString();
-
+    public final String sendPacket(D_DataPacket packet, String uuid) {
         packet.fillSenderInformation(uuid, this.getIdentifier());
+
+        if (this.debug) {
+            getLogger().info("[out] {}", packet);
+        }
+
+        this.sentMessages.add(uuid);
 
         this.sendPacket(packet, getPacketDest(packet.getReceiver()));
         return uuid;
     }
 
-    public final String sendMessage(String channel, String receiver, Consumer<ByteBuf> writer) {
-        return sendPacket(new RawPacket(channel, receiver, writer));
+    public ConnectorEventChannel getEventChannel() {
+        return eventChannel;
     }
 
-    public final String sendMessage(String channel, String receiver, ByteBuf message) {
-        return sendPacket(new RawPacket(channel, receiver, message));
-    }
 
-    public final String sendMessage(String channel, String receiver, String message) {
-        return sendPacket(new StringPacket(channel, receiver, message));
-    }
+    //implementation
+    public void handlePacket(Packet packet, ChannelHandlerContext ctx) {
+        if (!(packet instanceof D_DataPacket dp)) {
+            return;
+        }
 
-    public abstract void handlePacket(Packet packet, ChannelHandlerContext ctx);
+        if (this.debug) {
+            getLogger().info("[in] {}", packet);
+        }
 
-    public void handleSuspectedPacket(Packet packet, ChannelHandlerContext ctx) {
+        if (!Objects.equals(dp.getReceiver(), this.getIdentifier())) {
+            return;
+        }
+
+        if (packet instanceof D_Raw p) {
+            var buffer = ByteBufAllocator.DEFAULT.buffer();
+            buffer.writeBytes(p.getMessage());
+
+            this.eventChannel.messageReceived(this, p.getUuid(), p.getChannel(), p.getSender(), buffer);
+            buffer.release();
+            return;
+        }
+
+        getLogger().warn("[{}] unhandled data packet: {}", this.identifier, packet);
     }
 
     public abstract ChannelHandlerContext getPacketDest(String receiver);
 
-    protected void handleDataPacket(DataPacket packet) {
-        if (!Objects.equals(packet.getReceiver(), this.getIdentifier())) {
-            return;
+    public void handleSuspectedPacket(Packet packet, ChannelHandlerContext ctx) {
+    }
+
+    public boolean verifyQueryResult(String pid) {
+        if(this.sentMessages.contains(pid)){
+            this.sentMessages.remove(pid);
+            return true;
         }
 
-        if (packet instanceof RawPacket p) {
-            var bytebuf = ByteBufAllocator.DEFAULT.buffer();
-            bytebuf.writeBytes(p.getMessage());
-            this.eventChannel.messageReceived(this, p.getUuid(), p.getChannel(), p.getSender(), bytebuf);
-            bytebuf.release();
-            return;
-        }
-
-        if (packet instanceof StringPacket p) {
-            this.eventChannel.messageReceived(this, p.getUuid(), p.getChannel(), p.getSender(), p.getMessage());
-            return;
-        }
-
-        this.logger.info("unhandled data packet: {}", packet);
+        return false;
     }
 
 
-    public EventChannel getEventChannel() {
-        return eventChannel;
-    }
-
-    public static final class ServerQuery {
-        private final RemoteConnector provider;
+    @SuppressWarnings({"unchecked"})
+    public static final class ServerQuery<I> {
+        public static final Object EMPTY_PTR = new Object();
+        public static final ScheduledExecutorService TIMER_EXEC = Executors.newSingleThreadScheduledExecutor();
+        private final BlockingQueue<Object> syncFlag = new ArrayBlockingQueue<>(1);
         private final String uuid;
-        private Runnable timeOut;
-        private Consumer<ByteBuf> result;
+        private final Consumer<String> sender;
         private long timeOutMillSeconds;
+        private Runnable timeoutHandler;
+        private Consumer<I> resultHandler;
+        private Consumer<Throwable> errorHandler;
 
-        public ServerQuery(RemoteConnector provider, String uuid) {
-            this.provider = provider;
+
+        public ServerQuery(String uuid, Consumer<String> senderAction) {
             this.uuid = uuid;
+            this.sender = senderAction;
         }
 
-        public ServerQuery timeout(long mills, Runnable command) {
-            this.timeOut = command;
+
+        public ServerQuery<I> timeout(long mills, Runnable command) {
+            this.timeoutHandler = command;
             this.timeOutMillSeconds = mills;
             return this;
         }
 
-        public ServerQuery result(Consumer<ByteBuf> result) {
-            this.result = result;
+        public ServerQuery<I> error(Consumer<Throwable> error) {
+            this.errorHandler = error;
             return this;
         }
 
+        public ServerQuery<I> result(Consumer<I> result) {
+            this.resultHandler = result;
+            return this;
+        }
+
+        public void offer(Object result) {
+            this.syncFlag.add(result);
+        }
+
         public void sync() {
-            long start = System.currentTimeMillis();
-            while (!this.provider.cache.containsKey(this.uuid)) {
-                if (System.currentTimeMillis() - start > this.timeOutMillSeconds) {
-                    this.timeOut.run();
+            this.sender.accept(this.uuid);
+
+            TIMER_EXEC.schedule(() -> {
+                this.offer(EMPTY_PTR);
+            }, this.timeOutMillSeconds, TimeUnit.MICROSECONDS);
+
+            try {
+                var object = this.syncFlag.take();
+
+                if (object == EMPTY_PTR) {
+                    this.timeoutHandler.run();
                     return;
                 }
-                Thread.yield();
+
+                this.resultHandler.accept((I) object);
+            } catch (InterruptedException e) {
+                if (this.errorHandler != null) {
+                    this.errorHandler.accept(e);
+                }
             }
-            this.result.accept(this.provider.cache.get(this.uuid));
-            this.provider.cache.remove(this.uuid);
+
+        }
+
+        public static final class Holder implements ConnectorListener {
+            private final ConcurrentHashMap<String, ServerQuery<?>> lookups = new ConcurrentHashMap<>();
+
+            public void receive(String pid, Object message) {
+                var it = this.lookups.entrySet().iterator();
+
+                while (it.hasNext()) {
+                    var entry = it.next();
+                    var id = entry.getKey();
+                    var handler = entry.getValue();
+
+                    if (!Objects.equals(id, pid)) {
+                        continue;
+                    }
+
+                    handler.offer(message);
+                    it.remove();
+                    return;
+                }
+            }
+
+            @Override
+            public void messageReceived(RemoteConnector connector, String pid, String channel, String sender, ByteBuf message) {
+                this.receive(pid, message);
+            }
+
+            public void clear() {
+                for (var entry : this.lookups.entrySet()) {
+                    entry.getValue().offer(EMPTY_PTR);
+                }
+            }
+
+            public void register(String uuid, ServerQuery<?> query) {
+                this.lookups.put(uuid, query);
+            }
         }
     }
 }

@@ -2,33 +2,30 @@ package me.gb2022.apm.remote;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
+import me.gb2022.apm.remote.event.channel.MessageChannel;
+import me.gb2022.apm.remote.codec.ObjectCodec;
 import me.gb2022.apm.remote.connector.EndpointConnector;
 import me.gb2022.apm.remote.connector.ExchangeConnector;
 import me.gb2022.apm.remote.connector.RemoteConnector;
-import me.gb2022.apm.remote.event.RemoteEventHandler;
-import me.gb2022.apm.remote.event.RemoteMessageEventBus;
-import me.gb2022.apm.remote.event.ServerListener;
-import me.gb2022.apm.remote.event.local.ConnectorReadyEvent;
-import me.gb2022.apm.remote.event.remote.*;
-import me.gb2022.apm.remote.listen.ConnectorListener;
-import me.gb2022.apm.remote.listen.EventChannel;
-import me.gb2022.apm.remote.listen.MessageChannel;
-import me.gb2022.apm.remote.protocol.packet.data.RawPacket;
-import me.gb2022.apm.remote.util.BufferUtil;
+import me.gb2022.apm.remote.event.RemoteEventListener;
+import me.gb2022.apm.remote.event.connector.ConnectorStartEvent;
+import me.gb2022.apm.remote.event.MessengerEventChannel;
+import me.gb2022.apm.remote.protocol.packet.D_Raw;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.net.InetSocketAddress;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Set;
+import java.util.UUID;
 import java.util.function.Consumer;
 
-public final class RemoteMessenger implements ServerListener {
-    public static final Logger LOGGER = LogManager.getLogger("RemoteMessenger");
-
+@SuppressWarnings("UnusedReturnValue")
+public final class RemoteMessenger {
+    private final MessengerEventChannel eventChannel = new MessengerEventChannel(this);
     private final Map<String, MessageChannel> channels = new HashMap<>();
-    private final RemoteMessageEventBus eventBus = new RemoteMessageEventBus();
+    private final RemoteQuery.Holder queryHolder = new RemoteQuery.Holder();
+
     private boolean proxy;
     private String identifier;
     private InetSocketAddress address;
@@ -51,22 +48,18 @@ public final class RemoteMessenger implements ServerListener {
 
     public void start() {
         if (this.proxy) {
-            this.connector = new ExchangeConnector(identifier, address, key, this);
+            this.connector = new ExchangeConnector(this.identifier, this.address, this.key);
         } else {
-            this.connector = new EndpointConnector(identifier, address, key, this);
+            this.connector = new EndpointConnector(this.identifier, this.address, this.key);
         }
-
-        this.eventChannel().addListener(new EventAdapter());
-
-        for (var channel : this.channels.values()) {
-            channel._setContext(this.connector);
-            this.connector.getEventChannel().addListener(channel);
-        }
-
+        this.connector.getEventChannel().addListener(this.eventChannel);
+        this.eventChannel.addListener(this.queryHolder);
+        var evt = new ConnectorStartEvent(this.connector, this.address, this.identifier, this.key, this.proxy);
+        this.eventChannel.callEvent(evt, (l, e) -> l.endpointLogin(this, e));
         this.daemonThread = new DaemonThread(this.connector, 5);
-        new Thread(this.daemonThread, "APMConnectorDaemon").start();
 
-        //this.connector.waitForReady();
+
+        new Thread(this.daemonThread, "APMConnectorDaemon").start();
     }
 
     public void stop() {
@@ -82,114 +75,122 @@ public final class RemoteMessenger implements ServerListener {
     }
 
 
-    public Set<String> getServerInGroup() {
-        return this.connector.getServerInGroup();
+    //handler
+    public void registerEventHandler(Object handler) {
+        this.eventChannel.addListener(RemoteEventListener.APAdapter.getInstance(handler));
     }
 
-
-    //handler
-    public void addMessageHandler(Object handler) {
-        this.eventBus.registerEventListener(handler);
+    public void registerEventHandler(Class<?> handler) {
+        this.eventChannel.addListener(RemoteEventListener.APAdapter.getInstance(handler));
     }
 
     public void removeMessageHandler(Object handler) {
-        this.eventBus.unregisterEventListener(handler);
+        this.eventChannel.removeListener(RemoteEventListener.APAdapter.getInstance(handler));
+        RemoteEventListener.APAdapter.clearInstance(handler);
     }
 
-    public void callEvent(Object event) {
-        try {
-            this.eventBus.callEvent(event, RemoteEventHandler.LISTENER_GLOBAL_EVENT_CHANNEL);
-        } catch (Exception e) {
-            LOGGER.catching(e);
-        }
+    public void removeMessageHandler(Class<?> handler) {
+        this.eventChannel.removeListener(RemoteEventListener.APAdapter.getInstance(handler));
+        RemoteEventListener.APAdapter.clearInstance(handler);
     }
 
-    public RemoteConnector getConnector() {
+
+    public RemoteConnector connector() {
         return connector;
     }
 
-    private void callEvent(Object event, String channel) {
-        try {
-            this.eventBus.callEvent(event, channel);
-        } catch (Exception e) {
-            LOGGER.catching(e);
-        }
+    public RemoteQuery.Holder queryHolder() {
+        return queryHolder;
+    }
+
+    public String getIdentifier() {
+        return identifier;
+    }
+
+    public MessengerEventChannel eventChannel() {
+        return eventChannel;
+    }
+
+    public MessageChannel messageChannel(String channel) {
+        return this.channels.computeIfAbsent(channel, (k) -> {
+            var ch = new MessageChannel(this, channel);
+            this.eventChannel.addListener(ch);
+            return ch;
+        });
     }
 
 
-    //message
-    public String sendMessage(String target, String channel, ByteBuf msg) {
-        var uuid = this.connector.sendPacket((s) -> new RawPacket(channel, target, (b) -> b.writeBytes(msg)));
-        msg.release();
-        return uuid;
+    //byteBuf
+    public String message(String uuid, String target, String channel, ByteBuf msg) {
+        return this.connector.sendPacket(new D_Raw(channel, target, msg), uuid);
     }
 
-    public String sendMessage(String target, String channel, String msg) {
-        return sendMessage(target, channel, (b) -> BufferUtil.writeString(b, msg));
+    public String message(String target, String channel, ByteBuf msg) {
+        return message(UUID.randomUUID().toString(), target, channel, msg);
     }
 
-    public String sendMessage(String target, String channel, Consumer<ByteBuf> writer) {
-        return this.connector.sendPacket((s) -> new RawPacket(channel, target, writer));
+    public String broadcast(String channel, ByteBuf msg) {
+        return message(RemoteConnector.BROADCAST_ID, channel, msg);
     }
 
-    public void sendBroadcast(String channel, ByteBuf msg) {
-        this.sendMessage(RemoteConnector.BROADCAST_ID, channel, msg);
-    }
-
-    public void sendBroadcast(String channel, String msg) {
-        this.sendMessage(RemoteConnector.BROADCAST_ID, channel, msg);
-    }
-
-    public void sendBroadcast(String channel, Consumer<ByteBuf> writer) {
-        sendMessage(RemoteConnector.BROADCAST_ID, channel, writer);
+    public RemoteQuery<ByteBuf> query(String target, String channel, ByteBuf msg) {
+        return RemoteQuery.of(this, ByteBuf.class, (uuid) -> message(uuid, target, channel, msg));
     }
 
 
-    public RemoteConnector.ServerQuery sendQuery(String target, String channel, ByteBuf msg) {
-        String uuid = sendMessage(target, channel, msg);
-        return new RemoteConnector.ServerQuery(this.connector, uuid);
-    }
-
-    public RemoteConnector.ServerQuery sendQuery(String target, String channel, Consumer<ByteBuf> writer) {
-        ByteBuf message = ByteBufAllocator.DEFAULT.ioBuffer();
+    //writer
+    public String message(String uuid, String target, String channel, Consumer<ByteBuf> writer) {
+        var message = ByteBufAllocator.DEFAULT.buffer();
         writer.accept(message);
-
-        return this.sendQuery(target, channel, message);
+        return message(uuid, target, channel, message);
     }
 
-    public RemoteConnector.ServerQuery sendQuery(String target, String channel, String msg) {
-        return sendQuery(target, channel, (b) -> BufferUtil.writeString(b, msg));
+    public String message(String target, String channel, Consumer<ByteBuf> writer) {
+        return message(UUID.randomUUID().toString(), target, channel, writer);
+    }
+
+    public String broadcast(String channel, Consumer<ByteBuf> writer) {
+        return message(RemoteConnector.BROADCAST_ID, channel, writer);
+    }
+
+    public RemoteQuery<ByteBuf> query(String target, String channel, Consumer<ByteBuf> writer) {
+        return RemoteQuery.of(this, ByteBuf.class, (uuid) -> message(uuid, target, channel, writer));
     }
 
 
-    public EventChannel eventChannel() {
-        return this.connector.getEventChannel();
+    //template object
+    public <I> String message(String uuid, String target, String channel, I object) {
+        return message(uuid, target, channel, (b) -> ObjectCodec.encode(b, object));
     }
 
-    public MessageChannel messageChannel(String s) {
-        if (this.channels.containsKey(s)) {
-            return this.channels.get(s);
-        }
+    public <I> String message(String target, String channel, I object) {
+        return message(UUID.randomUUID().toString(), target, channel, object);
+    }
 
-        var channel = new MessageChannel(this.connector, s);
-        this.eventChannel().addListener(channel);
-        this.channels.put(s, channel);
+    public <I> String broadcast(String channel, I object) {
+        return message(RemoteConnector.BROADCAST_ID, channel, (b) -> ObjectCodec.encode(b, object));
+    }
 
-        return channel;
+    public <I> RemoteQuery<I> query(String target, String channel, I msg) {
+        @SuppressWarnings("unchecked") var a = (RemoteQuery<I>) RemoteQuery.of(
+                this,
+                msg.getClass(),
+                (uuid) -> message(uuid, target, channel, msg)
+        );
+        return a;
     }
 
 
     public static class DaemonThread implements Runnable {
+        public static final Logger LOGGER = LogManager.getLogger("APM-MessengerDaemon");
         private final RemoteConnector connector;
         private final int restartInterval;
-        private final Logger logger;
 
         private boolean running = true;
 
         public DaemonThread(RemoteConnector connector, int restartInterval) {
             this.connector = connector;
             this.restartInterval = restartInterval;
-            this.logger = LogManager.getLogger("APMConnectorDaemon[%s]".formatted(connector.getIdentifier()));
         }
 
         public RemoteConnector getConnector() {
@@ -209,77 +210,34 @@ public final class RemoteMessenger implements ServerListener {
                     this.getConnector().open();
                 } catch (Exception e) {
                     if (e.getMessage().startsWith("Connection refused")) {
-                        this.logger.info("cannot reach remote connector {}, wait 30s before reconnect.", this.connector.getBinding());
+                        LOGGER.info(
+                                "[{}] cannot reach remote connector {}, wait 30s before reconnect.",
+                                this.connector.getIdentifier(),
+                                this.connector.getBinding()
+                        );
+
                         try {
                             Thread.sleep(30000L);
                         } catch (InterruptedException e2) {
                             throw new RuntimeException(e2);
                         }
                     } else {
-                        this.logger.catching(e);
+                        LOGGER.error("[{}] FOUND ERROR: {}", this.connector.getIdentifier(), e.getMessage());
+                        LOGGER.catching(e);
                     }
                 }
 
                 if (!this.running) {
                     return;
                 }
-                this.logger.warn("Connector stopped, restart in {} sec.", this.restartInterval);
+                LOGGER.warn("[{}] Connector stopped, restart in {} sec.", this.connector.getIdentifier(), this.restartInterval);
                 try {
                     Thread.sleep(this.restartInterval * 1000L);
                 } catch (InterruptedException e2) {
                     throw new RuntimeException(e2);
                 }
-                this.logger.info("restarting connector thread.");
+                LOGGER.info("[{}] restarting connector thread.", this.connector.getIdentifier());
             }
-        }
-    }
-
-    private final class EventAdapter implements ConnectorListener {
-        @Override
-        public void serverJoined(RemoteConnector connector, String server) {
-            callEvent(new ServerJoinEvent(connector, server));
-        }
-
-        @Override
-        public void serverLeft(RemoteConnector connector, String server) {
-            callEvent(new ServerQuitEvent(connector, server));
-        }
-
-        @Override
-        public void connectorReady(RemoteConnector connector) {
-            callEvent(new ConnectorReadyEvent(connector));
-        }
-
-        @Override
-        public void messageReceived(RemoteConnector connector, String pid, String channel, String sender, ByteBuf message) {
-            callEvent(new RemoteMessageEvent(connector, sender, message), channel);
-
-            var result = ByteBufAllocator.DEFAULT.ioBuffer();
-
-            callEvent(new RemoteQueryEvent(connector, sender, message, result), channel);
-
-            if (result.writerIndex() != 0) {
-                var back = new RawPacket(channel, sender, result);
-                back.fillSenderInformation(connector.getIdentifier(), pid);
-                connector.sendPacket(back);
-            }
-        }
-
-        @Override
-        public void onMessagePassed(RemoteConnector connector, String pid, String channel, String sender, String receiver, ByteBuf message) {
-            var data = message.copy();
-
-            message.readerIndex(0);
-            message.writerIndex(0);
-
-            callEvent(new RemoteMessageExchangeEvent(connector, sender, data, message), channel);
-
-            if (message.writerIndex() == 0) {
-                message.readerIndex(data.readerIndex());
-                message.writerIndex(data.writerIndex());
-            }
-
-            data.release();
         }
     }
 }

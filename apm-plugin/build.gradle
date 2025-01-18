@@ -2,14 +2,33 @@ plugins {
     id 'java'
 }
 
-group = 'me.gb2022'
-version = ''
+group = 'me.gb2022.apm'
+version = '1.2.10'
 
 apply from: "E:/Java/GradleScripts/build-base.gradle"
+apply from: "../github-packages.gradle"
 applyGlobalScript("Publish/LocalStorage.gradle")
-applyGlobalScript("/Dependencies.gradle")
+apply plugin: "maven-publish"
+
+publishing {
+    repositories {
+        maven {
+            name = "GitHubPackages"
+            url = uri("https://maven.pkg.github.com/Grass-Block/GradlePackages")
+            credentials {
+                username = globalProperty("gpr.user")
+                password = globalProperty("gpr.key")
+            }
+        }
+    }
+    publications {
+        gpr(MavenPublication) {
+            from(components.java)
+        }
+    }
+}
 
 dependencies {
-    compileOnly localStorage("me.gb2022.commons-event")
-    compileOnly localStorage('me.gb2022.commons-container')
+    compileOnly 'me.gb2022.commons:commons-event:1.0'
+    compileOnly 'me.gb2022.commons:commons-container:1.0'
 }
