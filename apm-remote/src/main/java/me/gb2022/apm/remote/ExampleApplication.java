@@ -9,6 +9,8 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.net.InetSocketAddress;
+import java.util.Arrays;
+import java.util.Random;
 
 public interface ExampleApplication {
     InetSocketAddress ADDRESS = new InetSocketAddress("127.0.0.1", 63345);
@@ -29,6 +31,27 @@ public interface ExampleApplication {
         proxy.message("server2", "/handler_test", "Hi!");
         proxy.message("server1", "/handler_test", "Hi!");
 
+        var data = generate128MBRandomBytes();
+        long last = System.currentTimeMillis();
+
+        server2.messageChannel("/huge").setListener(new ChannelListener() {
+            @Override
+            public void handle(MessageChannel channel, RemoteMessageEvent event) {
+                System.out.println("received");
+
+                var array = new byte[data.length];
+
+                event.message().readBytes(array);
+
+                if (Arrays.equals(array, data)) {
+                    System.out.println(System.currentTimeMillis() - last);
+                }
+            }
+        });
+
+
+        server1.message("server2", "/huge", (b) -> b.writeBytes(data));
+
         server1.broadcast("/broadcast", "Hey guys, i'm server1!");
         server1.query("server2", "music:get", "server2, are you there?")
                 .result((result) -> System.out.println("[query]query result from server2: " + result))
@@ -37,12 +60,11 @@ public interface ExampleApplication {
                 .request();
     }
 
-    class QueryListener {
-        @APMRemoteEvent("music:get")
-        public void onRemoteQuery(RemoteMessenger context, RemoteQueryEvent event) {
-            System.out.println(event.decode(String.class));
-            event.write("Bro im here!");
-        }
+    static byte[] generate128MBRandomBytes() {
+        int size = 24 * 1024 * 1024; // 128 MB
+        byte[] data = new byte[size];
+        new Random().nextBytes(data); // 填充随机字节
+        return data;
     }
 
     interface ExampleStaticListener {
@@ -56,6 +78,14 @@ public interface ExampleApplication {
         @APMRemoteEvent("/handler_test")
         static void onRemoteMessage(RemoteMessenger context, RemoteMessageEvent event) {
             LOGGER.info("[{}] remote message: {}", context.getIdentifier(), event.decode(String.class));
+        }
+    }
+
+    class QueryListener {
+        @APMRemoteEvent("music:get")
+        public void onRemoteQuery(RemoteMessenger context, RemoteQueryEvent event) {
+            System.out.println(event.decode(String.class));
+            event.write("Bro im here!");
         }
     }
 

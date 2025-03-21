@@ -3,10 +3,12 @@ package me.gb2022.apm.remote.connector;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
 import io.netty.channel.ChannelHandlerContext;
-import me.gb2022.apm.remote.protocol.packet.D_DataPacket;
-import me.gb2022.apm.remote.protocol.packet.D_Raw;
-import me.gb2022.apm.remote.protocol.packet.Packet;
-import me.gb2022.apm.remote.util.MessageVerification;
+import me.gb2022.apm.remote.protocol.APMProtocol;
+import me.gb2022.apm.remote.protocol.D_DataPacket;
+import me.gb2022.apm.remote.protocol.D_Raw;
+import me.gb2022.simpnet.packet.Packet;
+import me.gb2022.simpnet.packet.PacketRegistry;
+import me.gb2022.simpnet.util.MessageVerification;
 import org.apache.logging.log4j.Logger;
 
 import java.net.InetSocketAddress;
@@ -29,7 +31,7 @@ public abstract class RemoteConnector {
     private boolean ready = false;
 
     protected RemoteConnector(InetSocketAddress binding, byte[] key, String identifier) {
-        this.verification = new MessageVerification(MessageVerification.Mode.AES_ECB, key);
+        this.verification = new MessageVerification(MessageVerification.Mode.AES_ECB, key, APMProtocol.MAGIC_NUMBER);
         this.binding = binding;
         this.identifier = identifier;
     }
@@ -96,26 +98,40 @@ public abstract class RemoteConnector {
             return;
         }
 
-        var packet = Packet.Registry.REGISTRY.decode(buffer);
+        var packet = PacketRegistry.REGISTRY.decode(buffer);
 
         handlePacket(packet, ctx);
     }
 
-    public final void sendPacket(Packet packet, ChannelHandlerContext... ctx) {
+    public final void sendPacket(ByteBuf buffer, ChannelHandlerContext ctx) {
+        buffer.readerIndex(0);
+
+        /*
         if (ctx.length == 0 || ctx[0] == null) {
             return;
         }
 
         var buffer = ctx[0].alloc().buffer();
-        Packet.Registry.REGISTRY.encode(packet, buffer);
+        PacketRegistry.REGISTRY.encode(packet, buffer);
 
         this.verification.pack(buffer);
 
         for (var c : ctx) {
-            c.writeAndFlush(buffer.copy());
+            c.writeAndFlush(buffer);
         }
 
         buffer.release();
+
+         */
+    }
+
+    public final void sendPacket(Packet packet, ChannelHandlerContext... ctx) {
+        for (var c : ctx) {
+            if (c == null) {
+                continue;
+            }
+            c.writeAndFlush(packet);
+        }
     }
 
     public final String sendPacket(D_DataPacket packet) {
@@ -172,7 +188,7 @@ public abstract class RemoteConnector {
     }
 
     public boolean verifyQueryResult(String pid) {
-        if(this.sentMessages.contains(pid)){
+        if (this.sentMessages.contains(pid)) {
             this.sentMessages.remove(pid);
             return true;
         }

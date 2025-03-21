@@ -2,7 +2,7 @@ package me.gb2022.apm.remote.event.message;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
-import me.gb2022.apm.remote.codec.ObjectCodec;
+import me.gb2022.simpnet.codec.ObjectCodec;
 import me.gb2022.apm.remote.connector.RemoteConnector;
 
 import java.util.function.Consumer;

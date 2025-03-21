@@ -2,21 +2,22 @@ package me.gb2022.apm.remote;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
-import me.gb2022.apm.remote.event.channel.MessageChannel;
-import me.gb2022.apm.remote.codec.ObjectCodec;
+import me.gb2022.simpnet.codec.ObjectCodec;
 import me.gb2022.apm.remote.connector.EndpointConnector;
 import me.gb2022.apm.remote.connector.ExchangeConnector;
 import me.gb2022.apm.remote.connector.RemoteConnector;
-import me.gb2022.apm.remote.event.RemoteEventListener;
-import me.gb2022.apm.remote.event.connector.ConnectorStartEvent;
 import me.gb2022.apm.remote.event.MessengerEventChannel;
-import me.gb2022.apm.remote.protocol.packet.D_Raw;
+import me.gb2022.apm.remote.event.RemoteEventListener;
+import me.gb2022.apm.remote.event.channel.MessageChannel;
+import me.gb2022.apm.remote.event.connector.ConnectorStartEvent;
+import me.gb2022.apm.remote.protocol.D_Raw;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.net.InetSocketAddress;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.function.Consumer;
 
@@ -52,6 +53,7 @@ public final class RemoteMessenger {
         } else {
             this.connector = new EndpointConnector(this.identifier, this.address, this.key);
         }
+
         this.connector.getEventChannel().addListener(this.eventChannel);
         this.eventChannel.addListener(this.queryHolder);
         var evt = new ConnectorStartEvent(this.connector, this.address, this.identifier, this.key, this.proxy);
@@ -172,14 +174,20 @@ public final class RemoteMessenger {
     }
 
     public <I> RemoteQuery<I> query(String target, String channel, I msg) {
-        @SuppressWarnings("unchecked") var a = (RemoteQuery<I>) RemoteQuery.of(
-                this,
-                msg.getClass(),
-                (uuid) -> message(uuid, target, channel, msg)
+        @SuppressWarnings("unchecked") var a = (RemoteQuery<I>) RemoteQuery.of(this,
+                                                                               msg.getClass(),
+                                                                               (uuid) -> message(uuid, target, channel, msg)
         );
         return a;
     }
 
+    @Override
+    public int hashCode() {
+        var ipHash = this.address.getAddress() != null ? this.address.getAddress().hashCode() : 0;
+        var portHash = Integer.hashCode(address.getPort());
+
+        return Objects.hash(ipHash, portHash, this.identifier);
+    }
 
     public static class DaemonThread implements Runnable {
         public static final Logger LOGGER = LogManager.getLogger("APM-MessengerDaemon");
@@ -210,10 +218,10 @@ public final class RemoteMessenger {
                     this.getConnector().open();
                 } catch (Exception e) {
                     if (e.getMessage().startsWith("Connection refused")) {
-                        LOGGER.info(
-                                "[{}] cannot reach remote connector {}, wait 30s before reconnect.",
-                                this.connector.getIdentifier(),
-                                this.connector.getBinding()
+                        LOGGER.info("[{}-{}] cannot reach remote connector {}, wait 30s before reconnect.",
+                                    this.connector.getIdentifier(),
+                                    hashCode(),
+                                    this.connector.getBinding()
                         );
 
                         try {
@@ -230,13 +238,17 @@ public final class RemoteMessenger {
                 if (!this.running) {
                     return;
                 }
-                LOGGER.warn("[{}] Connector stopped, restart in {} sec.", this.connector.getIdentifier(), this.restartInterval);
+                LOGGER.warn("[{}-{}] Connector stopped, restart in {} sec.",
+                            this.connector.getIdentifier(),
+                            hashCode(),
+                            this.restartInterval
+                );
                 try {
                     Thread.sleep(this.restartInterval * 1000L);
                 } catch (InterruptedException e2) {
                     throw new RuntimeException(e2);
                 }
-                LOGGER.info("[{}] restarting connector thread.", this.connector.getIdentifier());
+                LOGGER.info("[{}-{}] restarting connector thread.", this.connector.getIdentifier(), hashCode());
             }
         }
     }

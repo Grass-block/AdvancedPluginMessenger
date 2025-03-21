@@ -1,20 +1,18 @@
 package me.gb2022.apm.remote.connector;
 
 import io.netty.bootstrap.Bootstrap;
-import io.netty.buffer.ByteBuf;
-import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelHandlerContext;
-import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioSocketChannel;
-import me.gb2022.apm.remote.protocol.packet.*;
-import me.gb2022.apm.remote.util.NettyChannelInitializer;
+import me.gb2022.apm.remote.protocol.*;
+import me.gb2022.simpnet.MessageVerifyFailedException;
+import me.gb2022.simpnet.packet.Packet;
+import me.gb2022.simpnet.packet.PacketInboundHandler;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.net.InetSocketAddress;
 import java.util.Arrays;
-import java.util.concurrent.Future;
 
 public final class EndpointConnector extends RemoteConnector {
     private static final Logger LOGGER = LogManager.getLogger("APM-EndpointConnector");
@@ -38,7 +36,7 @@ public final class EndpointConnector extends RemoteConnector {
 
         bootstrap.group(group);
         bootstrap.channel(NioSocketChannel.class);
-        bootstrap.handler(new NettyChannelInitializer(NetworkController::new));
+        bootstrap.handler(APMProtocol.channelBuilder(this.getVerification()).handler(NetworkController::new));
 
         LOGGER.info("[{}]Pipeline initialized.", identifier);
 
@@ -108,24 +106,29 @@ public final class EndpointConnector extends RemoteConnector {
         return LOGGER;
     }
 
-    private class NetworkController extends SimpleChannelInboundHandler<ByteBuf> {
+
+    private class NetworkController extends PacketInboundHandler {
         @Override
         public void channelActive(ChannelHandlerContext ctx) {
             channel = ctx;
-            sendPacket(new P_Login(getIdentifier(), key), ctx);
+            ctx.writeAndFlush(new P_Login(getIdentifier(), key));
         }
 
         @Override
-        protected void channelRead0(ChannelHandlerContext ctx, ByteBuf msg) {
-            receivePacket(msg, ctx);
-        }
-
-        @Override
-        public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause){
+        public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
             if (cause.getMessage().contains("Connection reset")) {
-                LOGGER.error("[{}]connection reset,disconnection...", identifier);
+                LOGGER.error("[{}]connection reset, disconnecting...", identifier);
                 ctx.close();
             }
+            if (cause instanceof MessageVerifyFailedException e) {
+                LOGGER.error("[{}]found invalid datapack (sig={}), disconnecting...", identifier, e.getMessage());
+                ctx.disconnect();
+            }
+        }
+
+        @Override
+        protected void channelRead0(ChannelHandlerContext ctx, Packet packet) {
+            handlePacket(packet, ctx);
         }
     }
 }

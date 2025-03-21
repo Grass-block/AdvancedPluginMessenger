@@ -39,8 +39,9 @@ publishing {
     }
 }
 
-dependencies2 {
+dependencies {
     implementation 'io.netty:netty-all:4.1.100.Final'
+    implementation 'io.netty:netty-codec:4.1.100.Final'
     implementation "org.apache.logging.log4j:log4j-core:2.8.1"
 
     implementation 'me.gb2022.commons:commons-nbt:1.0'
@@ -50,8 +51,9 @@ dependencies2 {
     implementation 'me.gb2022.commons:commons-reflection:1.0'
 }
 
-dependencies {
+dependencies2 {
     compileOnly 'io.netty:netty-all:4.1.100.Final'
+    compileOnly 'io.netty:netty-codec:4.1.100.Final'
     compileOnly "org.apache.logging.log4j:log4j-core:2.8.1"
     compileOnly 'me.gb2022.commons:commons-nbt:1.0'
     compileOnly 'me.gb2022.commons:commons-math:1.0'

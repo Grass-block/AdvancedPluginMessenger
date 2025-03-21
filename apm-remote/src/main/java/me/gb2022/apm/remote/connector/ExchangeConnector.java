@@ -1,16 +1,18 @@
 package me.gb2022.apm.remote.connector;
 
 import io.netty.bootstrap.ServerBootstrap;
-import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
-import me.gb2022.apm.remote.protocol.packet.*;
-import me.gb2022.apm.remote.util.NettyChannelInitializer;
+import me.gb2022.apm.remote.protocol.*;
 import me.gb2022.commons.container.MultiMap;
+import me.gb2022.simpnet.MessageVerifyFailedException;
+import me.gb2022.simpnet.packet.InvalidPacketFormatException;
+import me.gb2022.simpnet.packet.Packet;
+import me.gb2022.simpnet.packet.PacketInboundHandler;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -42,7 +44,7 @@ public final class ExchangeConnector extends RemoteConnector {
             var b = new ServerBootstrap();
             b.group(bossGroup, workerGroup)
                     .channel(NioServerSocketChannel.class)
-                    .childHandler(new NettyChannelInitializer(NetworkController::new));
+                    .childHandler(APMProtocol.channelBuilder(this.getVerification()).handler(NetworkController::new));
             var future = b.bind(this.getBinding().getPort()).sync();
             this.ready();
             this.channel = future.channel();
@@ -118,7 +120,7 @@ public final class ExchangeConnector extends RemoteConnector {
 
             if (broadcast) {
                 for (var target : this.contexts.keySet()) {
-                    if(Objects.equals(target, sender)){
+                    if (Objects.equals(target, sender)) {
                         continue;
                     }
 
@@ -143,12 +145,7 @@ public final class ExchangeConnector extends RemoteConnector {
     @Override
     public void handleSuspectedPacket(Packet packet, ChannelHandlerContext ctx) {
         if (packet instanceof P_Login login) {
-            LOGGER.info(
-                    "[{}] Suspected login of server: {}[{}]",
-                    this.identifier,
-                    ctx.channel().remoteAddress(),
-                    login.getIdentifier()
-            );
+            LOGGER.info("[{}] Suspected login of server: {}[{}]", this.identifier, ctx.channel().remoteAddress(), login.getIdentifier());
             sendPacket(P_LoginResult.failed("verification failed"), ctx);
 
             ctx.disconnect();
@@ -160,7 +157,7 @@ public final class ExchangeConnector extends RemoteConnector {
         return this.contexts.get(receiver);
     }
 
-    private class NetworkController extends SimpleChannelInboundHandler<ByteBuf> {
+    private class NetworkController extends PacketInboundHandler {
         @Override
         public void channelInactive(ChannelHandlerContext ctx) {
             if (!contexts.containsValue(ctx)) {
@@ -170,8 +167,24 @@ public final class ExchangeConnector extends RemoteConnector {
         }
 
         @Override
-        protected void channelRead0(ChannelHandlerContext ctx, ByteBuf byteBuf) {
-            receivePacket(byteBuf, ctx);
+        public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
+            if (cause.getMessage().contains("Connection reset")) {
+                LOGGER.error("[{}]connection reset, disconnecting...", identifier);
+                ctx.close();
+            }
+            if (cause instanceof MessageVerifyFailedException e) {
+                LOGGER.error("[{}]found invalid datapack (sig={}), disconnecting...", identifier, e.getMessage());
+                ctx.disconnect();
+            }
+            if (cause instanceof InvalidPacketFormatException e) {
+                LOGGER.error("[{}]found invalid datapack (sig={}), disconnecting...", identifier, e.getMessage());
+                ctx.disconnect();
+            }
+        }
+
+        @Override
+        protected void channelRead0(ChannelHandlerContext ctx, Packet packet) {
+            handlePacket(packet, ctx);
         }
     }
 }
