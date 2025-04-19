@@ -3,7 +3,7 @@ plugins {
 }
 
 group = 'me.gb2022.apm'
-version = '3.2.42'
+version = '4.0.0'
 
 repositories {
     mavenCentral()
@@ -39,7 +39,7 @@ publishing {
     }
 }
 
-dependencies {
+dependencies2 {
     implementation 'io.netty:netty-all:4.1.100.Final'
     implementation 'io.netty:netty-codec:4.1.100.Final'
     implementation "org.apache.logging.log4j:log4j-core:2.8.1"
@@ -49,9 +49,11 @@ dependencies {
     implementation 'me.gb2022.commons:commons-container:1.0'
     implementation 'me.gb2022.commons:commons-event:1.0'
     implementation 'me.gb2022.commons:commons-reflection:1.0'
+
+    implementation localStorage("me.gb2022.simpnet.simpnet-base")
 }
 
-dependencies2 {
+dependencies {
     compileOnly 'io.netty:netty-all:4.1.100.Final'
     compileOnly 'io.netty:netty-codec:4.1.100.Final'
     compileOnly "org.apache.logging.log4j:log4j-core:2.8.1"
@@ -60,6 +62,8 @@ dependencies2 {
     compileOnly 'me.gb2022.commons:commons-container:1.0'
     compileOnly 'me.gb2022.commons:commons-event:1.0'
     compileOnly 'me.gb2022.commons:commons-reflection:1.0'
+
+   implementation localStorage("me.gb2022.simpnet.simpnet-base")
 }
 
 test {

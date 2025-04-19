@@ -3,6 +3,7 @@ package me.gb2022.apm.remote.connector;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
 import io.netty.channel.ChannelHandlerContext;
+import me.gb2022.apm.remote.event.DebugListener;
 import me.gb2022.apm.remote.protocol.APMProtocol;
 import me.gb2022.apm.remote.protocol.D_DataPacket;
 import me.gb2022.apm.remote.protocol.D_Raw;
@@ -15,12 +16,12 @@ import java.net.InetSocketAddress;
 import java.util.HashSet;
 import java.util.Objects;
 import java.util.Set;
-import java.util.UUID;
 import java.util.concurrent.*;
 import java.util.function.Consumer;
 
 public abstract class RemoteConnector {
     public static final String BROADCAST_ID = "_apm://broadcast";
+    public static final String BROADCAST_ACCEPT = "_apm://broadcast/accept";
     protected final ConnectorEventChannel eventChannel = new ConnectorEventChannel();
     protected final Set<String> groupServers = new HashSet<>();
     protected final String identifier;
@@ -103,28 +104,6 @@ public abstract class RemoteConnector {
         handlePacket(packet, ctx);
     }
 
-    public final void sendPacket(ByteBuf buffer, ChannelHandlerContext ctx) {
-        buffer.readerIndex(0);
-
-        /*
-        if (ctx.length == 0 || ctx[0] == null) {
-            return;
-        }
-
-        var buffer = ctx[0].alloc().buffer();
-        PacketRegistry.REGISTRY.encode(packet, buffer);
-
-        this.verification.pack(buffer);
-
-        for (var c : ctx) {
-            c.writeAndFlush(buffer);
-        }
-
-        buffer.release();
-
-         */
-    }
-
     public final void sendPacket(Packet packet, ChannelHandlerContext... ctx) {
         for (var c : ctx) {
             if (c == null) {
@@ -134,15 +113,16 @@ public abstract class RemoteConnector {
         }
     }
 
-    public final String sendPacket(D_DataPacket packet) {
-        return sendPacket(packet, UUID.randomUUID().toString());
-    }
-
     public final String sendPacket(D_DataPacket packet, String uuid) {
         packet.fillSenderInformation(uuid, this.getIdentifier());
 
         if (this.debug) {
             getLogger().info("[out] {}", packet);
+        }
+
+        if (this instanceof ExchangeConnector && Objects.equals(packet.getReceiver(), BROADCAST_ID)) {
+            this.handlePacket(packet, getPacketDest("__self"));
+            return uuid;
         }
 
         this.sentMessages.add(uuid);
@@ -166,7 +146,14 @@ public abstract class RemoteConnector {
             getLogger().info("[in] {}", packet);
         }
 
-        if (!Objects.equals(dp.getReceiver(), this.getIdentifier())) {
+        var receive = Objects.equals(dp.getReceiver(), this.getIdentifier());
+        var acceptBroadcast = Objects.equals(dp.getReceiver(), RemoteConnector.BROADCAST_ACCEPT);
+        var denySelfSent = Objects.equals(dp.getSender(), this.getIdentifier());
+
+        if (!receive && !acceptBroadcast) {
+            return;
+        }
+        if (denySelfSent) {
             return;
         }
 

@@ -4,7 +4,6 @@ import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.ByteBufAllocator;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
-import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 import me.gb2022.apm.remote.protocol.*;
@@ -119,23 +118,13 @@ public final class ExchangeConnector extends RemoteConnector {
             }
 
             if (broadcast) {
+                data.setReceiver(RemoteConnector.BROADCAST_ACCEPT);
                 for (var target : this.contexts.keySet()) {
-                    if (Objects.equals(target, sender)) {
-                        continue;
-                    }
-
-                    data.setReceiver(target);
                     sendPacket(packet, this.contexts.get(target));
                 }
-
-                data.setReceiver(this.getIdentifier());
                 handlePacket(data, ctx);
-                return;
-            }
-
-            if (redirect) {
+            } else if (redirect) {
                 sendPacket(packet, getPacketDest(receiver));
-                return;
             }
         }
 
@@ -164,6 +153,11 @@ public final class ExchangeConnector extends RemoteConnector {
                 return;
             }
             handlePacket(new P_Logout(contexts.of(ctx)), ctx);
+        }
+
+        @Override
+        public void handlerAdded(ChannelHandlerContext ctx) {
+            contexts.put("__self", ctx);
         }
 
         @Override
