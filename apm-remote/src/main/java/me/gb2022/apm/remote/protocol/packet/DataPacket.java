@@ -1,30 +1,30 @@
-package me.gb2022.apm.remote.protocol;
+package me.gb2022.apm.remote.protocol.packet;
 
 import io.netty.buffer.ByteBuf;
 import me.gb2022.simpnet.packet.DeserializedConstructor;
 import me.gb2022.simpnet.packet.Packet;
 import me.gb2022.simpnet.util.BufferUtil;
 
-public abstract class D_DataPacket implements Packet {
+public abstract class DataPacket implements Packet {
     private final String channel;
     private String sender;
     private String uuid;
     private String receiver;
 
-    public D_DataPacket(String sender, String receiver, String channel, String uuid) {
+    public DataPacket(String sender, String receiver, String channel, String uuid) {
         this.sender = sender;
         this.receiver = receiver;
         this.channel = channel;
         this.uuid = uuid;
     }
 
-    public D_DataPacket(String channel, String receiver) {
+    public DataPacket(String channel, String receiver) {
         this.channel = channel;
         this.receiver = receiver;
     }
 
     @DeserializedConstructor
-    public D_DataPacket(ByteBuf data) {
+    public DataPacket(ByteBuf data) {
         this.sender = BufferUtil.readString(data);
         this.receiver = BufferUtil.readString(data);
         this.channel = BufferUtil.readString(data);

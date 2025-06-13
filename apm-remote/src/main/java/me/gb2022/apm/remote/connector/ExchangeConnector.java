@@ -6,10 +6,11 @@ import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
-import me.gb2022.apm.remote.protocol.*;
+import me.gb2022.apm.remote.protocol.APMProtocol;
+import me.gb2022.apm.remote.protocol.packet.DataPacket;
+import me.gb2022.apm.remote.protocol.packet.P11_ServerLogout;
+import me.gb2022.apm.remote.protocol.packet.P20_RawData;
 import me.gb2022.commons.container.MultiMap;
-import me.gb2022.simpnet.MessageVerifyFailedException;
-import me.gb2022.simpnet.packet.InvalidPacketFormatException;
 import me.gb2022.simpnet.packet.Packet;
 import me.gb2022.simpnet.packet.PacketInboundHandler;
 import org.apache.logging.log4j.LogManager;
@@ -17,17 +18,16 @@ import org.apache.logging.log4j.Logger;
 
 import java.net.InetSocketAddress;
 import java.util.Objects;
+import java.util.Set;
 
 public final class ExchangeConnector extends RemoteConnector {
     public static final Logger LOGGER = LogManager.getLogger("APM-ExchangeConnector");
 
-    private final MultiMap<String, ChannelHandlerContext> contexts = new MultiMap<>();
-    private final byte[] key;
+    private final MultiMap<String, Channel> channels = new MultiMap<>();
     private Channel channel;
 
-    public ExchangeConnector(String id, InetSocketAddress binding, byte[] key) {
-        super(binding, key, id);
-        this.key = key;
+    public ExchangeConnector(InetSocketAddress binding, String id, byte[] key, ConnectorListener listener) {
+        super(binding, id, key, listener);
     }
 
     @Override
@@ -36,6 +36,7 @@ public final class ExchangeConnector extends RemoteConnector {
     }
 
     public void open() {
+        this.ready = false;
         var bossGroup = new NioEventLoopGroup();
         var workerGroup = new NioEventLoopGroup();
 
@@ -43,12 +44,14 @@ public final class ExchangeConnector extends RemoteConnector {
             var b = new ServerBootstrap();
             b.group(bossGroup, workerGroup)
                     .channel(NioServerSocketChannel.class)
-                    .childHandler(APMProtocol.channelBuilder(this.getVerification()).handler(NetworkController::new));
+                    .childHandler(APMProtocol.server(this).handler(NetworkController::new));
             var future = b.bind(this.getBinding().getPort()).sync();
-            this.ready();
-            this.channel = future.channel();
 
-            LOGGER.info("[{}]server started on {}", this.identifier, this.getBinding());
+            this.channel = future.channel();
+            this.listener.connectorReady(this);
+            this.ready = true;
+
+            LOGGER.info("[{}] server started on {}", this.identifier, this.getBinding());
 
             this.channel.closeFuture().sync();
         } catch (InterruptedException e) {
@@ -64,121 +67,86 @@ public final class ExchangeConnector extends RemoteConnector {
         this.channel.close();
     }
 
-    private ChannelHandlerContext[] getContexts() {
-        return this.contexts.values().toArray(new ChannelHandlerContext[0]);
+    private Channel[] getChannels() {
+        return this.channels.values().toArray(new Channel[0]);
     }
 
     @Override
-    public void handlePacket(Packet packet, ChannelHandlerContext ctx) {
-        if (packet instanceof P_Login login) {
-            var id = login.getIdentifier();
-            var addr = ctx.channel().remoteAddress();
-
-            LOGGER.info("[{}]Protocol verification passed: {}[{}]", this.identifier, addr, id);
-
-            if (!login.verify(this.key)) {
-                LOGGER.info("[{}]KEY verification failed: {}[{}]", this.identifier, addr, id);
-                handleSuspectedPacket(login, ctx);
-                return;
-            }
-
-            LOGGER.info("[{}]KEY verification passed: {}[{}]", this.identifier, addr, id);
-
-            sendPacket(new P_ServerLogin(id), getContexts());
-            sendPacket(P_LoginResult.succeed(this.contexts.keySet().toArray(new String[0])), ctx);
-            this.contexts.put(id, ctx);
-
-            this.eventChannel.serverJoined(this, id);
-        }
-
-        if (packet instanceof P_Logout logout) {
-            var id = logout.getIdentifier();
-            LOGGER.info("Server logout: {}[{}]", ctx.channel().remoteAddress(), id);
-
-            this.contexts.remove(id);
-            sendPacket(new P_ServerLogout(id));
-
-            this.eventChannel.serverLeft(this, id);
-        }
-
-        if (packet instanceof D_Raw data) {
-            var receiver = data.getReceiver();
-            var uuid = data.getUuid();
-            var sender = data.getSender();
-            var channel = data.getChannel();
-
-            var broadcast = Objects.equals(receiver, BROADCAST_ID);
-            var redirect = !Objects.equals(receiver, this.getIdentifier());
-
-            if (broadcast || redirect) {
-                var buffer = ByteBufAllocator.DEFAULT.buffer();
-                buffer.writeBytes(data.getMessage());
-                this.eventChannel.onMessagePassed(this, uuid, channel, sender, receiver, buffer);
-                data.setMessage(buffer);
-            }
-
-            if (broadcast) {
-                data.setReceiver(RemoteConnector.BROADCAST_ACCEPT);
-                for (var target : this.contexts.keySet()) {
-                    sendPacket(packet, this.contexts.get(target));
-                }
-                handlePacket(data, ctx);
-            } else if (redirect) {
-                sendPacket(packet, getPacketDest(receiver));
-            }
-        }
-
-        super.handlePacket(packet, ctx);
+    public Channel getPacketDest(String receiver) {
+        return this.channels.get(receiver);
     }
+
 
     @Override
-    public void handleSuspectedPacket(Packet packet, ChannelHandlerContext ctx) {
-        if (packet instanceof P_Login login) {
-            LOGGER.info("[{}] Suspected login of server: {}[{}]", this.identifier, ctx.channel().remoteAddress(), login.getIdentifier());
-            sendPacket(P_LoginResult.failed("verification failed"), ctx);
-
-            ctx.disconnect();
-        }
+    public Set<String> getServerInGroup() {
+        return this.channels.keySet();
     }
 
-    @Override
-    public ChannelHandlerContext getPacketDest(String receiver) {
-        return this.contexts.get(receiver);
+    public void onServerJoin(String id, Channel c) {
+        sendPacket(new P11_ServerLogout(id), this.getChannels());
+        this.channels.put(id, c);
+        this.listener.serverJoined(this, id);
     }
+
+    public void onServerLeft(String id) {
+        this.channels.remove(id);
+        this.listener.serverLeft(this, id);
+        sendPacket(new P11_ServerLogout(id), this.getChannels());
+    }
+
 
     private class NetworkController extends PacketInboundHandler {
         @Override
         public void channelInactive(ChannelHandlerContext ctx) {
-            if (!contexts.containsValue(ctx)) {
+            if (!channels.containsValue(ctx.channel())) {
                 return;
             }
-            handlePacket(new P_Logout(contexts.of(ctx)), ctx);
-        }
-
-        @Override
-        public void handlerAdded(ChannelHandlerContext ctx) {
-            contexts.put("__self", ctx);
-        }
-
-        @Override
-        public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-            if (cause.getMessage().contains("Connection reset")) {
-                LOGGER.error("[{}]connection reset, disconnecting...", identifier);
-                ctx.close();
-            }
-            if (cause instanceof MessageVerifyFailedException e) {
-                LOGGER.error("[{}]found invalid datapack (sig={}), disconnecting...", identifier, e.getMessage());
-                ctx.disconnect();
-            }
-            if (cause instanceof InvalidPacketFormatException e) {
-                LOGGER.error("[{}]found invalid datapack (sig={}), disconnecting...", identifier, e.getMessage());
-                ctx.disconnect();
-            }
+            onServerLeft(channels.of(ctx.channel()));
         }
 
         @Override
         protected void channelRead0(ChannelHandlerContext ctx, Packet packet) {
-            handlePacket(packet, ctx);
+            if (!(packet instanceof DataPacket data)) {
+                return;
+            }
+
+            var receiver = data.getReceiver();
+            var uuid = data.getUuid();
+            var sender = data.getSender();
+            var ch = data.getChannel();
+
+            var broadcast = Objects.equals(receiver, ExchangeConnector.BROADCAST_ID);
+            var forwarding = !Objects.equals(receiver, getIdentifier());
+
+            if (!forwarding) {
+                handlePacket(packet, ctx.channel());
+                return;
+            }
+
+            if (data instanceof P20_RawData r) {
+                var buffer = ByteBufAllocator.DEFAULT.buffer();
+                buffer.writeBytes(r.getMessage());
+                listener.onMessagePassed(ExchangeConnector.this, uuid, ch, sender, receiver, buffer);
+                buffer.readerIndex(0);
+                r.setMessage(buffer);
+            }
+
+            if (broadcast) {
+                data.setReceiver(RemoteConnector.BROADCAST_ACCEPT);
+                for (var target : channels.keySet()) {
+                    sendPacket(data, channels.get(target));
+                }
+                return;
+            }
+
+            var targetChannel = getPacketDest(data.getReceiver());
+
+            if (targetChannel == null) {
+                LOGGER.error("received packet with non-existing dest: {}", data);
+                return;
+            }
+
+            targetChannel.writeAndFlush(packet);
         }
     }
 }

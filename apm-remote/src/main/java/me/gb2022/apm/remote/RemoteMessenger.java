@@ -2,15 +2,17 @@ package me.gb2022.apm.remote;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
-import me.gb2022.simpnet.codec.ObjectCodec;
 import me.gb2022.apm.remote.connector.EndpointConnector;
 import me.gb2022.apm.remote.connector.ExchangeConnector;
 import me.gb2022.apm.remote.connector.RemoteConnector;
 import me.gb2022.apm.remote.event.MessengerEventChannel;
 import me.gb2022.apm.remote.event.RemoteEventListener;
 import me.gb2022.apm.remote.event.channel.MessageChannel;
-import me.gb2022.apm.remote.event.connector.ConnectorStartEvent;
-import me.gb2022.apm.remote.protocol.D_Raw;
+import me.gb2022.apm.remote.event.connector.ConnectorReadyEvent;
+import me.gb2022.apm.remote.protocol.packet.P20_RawData;
+import me.gb2022.apm.remote.util.BlockableDaemon;
+import me.gb2022.apm.remote.util.ConnectorState;
+import me.gb2022.simpnet.codec.ObjectCodec;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -19,61 +21,64 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
 @SuppressWarnings("UnusedReturnValue")
 public final class RemoteMessenger {
+    public static final Logger LOGGER = LogManager.getLogger("APM/RemoteMessenger");
+
     private final MessengerEventChannel eventChannel = new MessengerEventChannel(this);
     private final Map<String, MessageChannel> channels = new HashMap<>();
     private final RemoteQuery.Holder queryHolder = new RemoteQuery.Holder();
-
+    private final AtomicReference<RemoteConnector> connector = new AtomicReference<>();
+    private final AtomicReference<ConnectorState> state = new AtomicReference<>(ConnectorState.CLOSED);
+    private final BlockableDaemon<RemoteConnector> daemon = new BlockableDaemon<>(this.connector, this.state, this::createConnector);
     private boolean proxy;
     private String identifier;
     private InetSocketAddress address;
     private byte[] key;
-    private RemoteConnector connector;
-    private DaemonThread daemonThread;
-
 
     public RemoteMessenger(boolean proxy, String identifier, InetSocketAddress address, byte[] key) {
+        this.eventChannel.addListener(this.queryHolder);
+        this.eventChannel.addListener(new RemoteEventListener() {
+            @Override
+            public void connectorReady(RemoteMessenger messenger, ConnectorReadyEvent event) {
+                state.set(ConnectorState.OPENED);
+            }
+        });
         this.configure(proxy, identifier, address, key);
+        this.start();
     }
 
     public void configure(boolean proxy, String identifier, InetSocketAddress address, byte[] key) {
+        LOGGER.info("reconfigured data. waiting async daemon restart.");
+
         this.proxy = proxy;
         this.identifier = identifier;
         this.address = address;
         this.key = key;
-        this.restart();
+
+        if (this.connector.get() != null) {
+            this.connector.get().close();
+        }
     }
 
     public void start() {
-        if (this.proxy) {
-            this.connector = new ExchangeConnector(this.identifier, this.address, this.key);
-        } else {
-            this.connector = new EndpointConnector(this.identifier, this.address, this.key);
-        }
-
-        this.connector.getEventChannel().addListener(this.eventChannel);
-        this.eventChannel.addListener(this.queryHolder);
-        var evt = new ConnectorStartEvent(this.connector, this.address, this.identifier, this.key, this.proxy);
-        this.eventChannel.callEvent(evt, (l, e) -> l.endpointLogin(this, e));
-        this.daemonThread = new DaemonThread(this.connector, 5);
-
-
-        new Thread(this.daemonThread, "APMConnectorDaemon").start();
+        this.daemon.initialize();
+        new Thread(this.daemon).start();
     }
 
     public void stop() {
-        if (this.daemonThread != null) {
-            this.daemonThread.stop();
-        }
-        this.daemonThread = null;
+        this.daemon.quit();
     }
 
-    public void restart() {
-        this.stop();
-        this.start();
+
+    private RemoteConnector createConnector() {
+        if (this.proxy) {
+            return new ExchangeConnector(this.address, this.identifier, this.key, this.eventChannel);
+        }
+        return new EndpointConnector(this.address, this.identifier, this.key, this.eventChannel);
     }
 
 
@@ -98,7 +103,7 @@ public final class RemoteMessenger {
 
 
     public RemoteConnector connector() {
-        return connector;
+        return connector.get();
     }
 
     public RemoteQuery.Holder queryHolder() {
@@ -124,7 +129,7 @@ public final class RemoteMessenger {
 
     //byteBuf
     public String message(String uuid, String target, String channel, ByteBuf msg) {
-        return this.connector.sendPacket(new D_Raw(channel, target, msg), uuid);
+        return this.connector().sendPacket(new P20_RawData(channel, target, msg), uuid);
     }
 
     public String message(String target, String channel, ByteBuf msg) {
@@ -187,69 +192,5 @@ public final class RemoteMessenger {
         var portHash = Integer.hashCode(address.getPort());
 
         return Objects.hash(ipHash, portHash, this.identifier);
-    }
-
-    public static class DaemonThread implements Runnable {
-        public static final Logger LOGGER = LogManager.getLogger("APM-MessengerDaemon");
-        private final RemoteConnector connector;
-        private final int restartInterval;
-
-        private boolean running = true;
-
-        public DaemonThread(RemoteConnector connector, int restartInterval) {
-            this.connector = connector;
-            this.restartInterval = restartInterval;
-        }
-
-        public RemoteConnector getConnector() {
-            return connector;
-        }
-
-        public void stop() {
-            this.running = false;
-            this.getConnector().close();
-        }
-
-        @Override
-        @SuppressWarnings({"BusyWait"})
-        public void run() {
-            while (this.running) {
-                try {
-                    this.getConnector().open();
-                } catch (Exception e) {
-                    if (e.getMessage().startsWith("Connection refused")) {
-                        LOGGER.info("[{}-{}] cannot reach remote connector {}, wait 30s before reconnect.",
-                                    this.connector.getIdentifier(),
-                                    hashCode(),
-                                    this.connector.getBinding()
-                        );
-
-                        try {
-                            Thread.sleep(30000L);
-                        } catch (InterruptedException e2) {
-                            throw new RuntimeException(e2);
-                        }
-                    } else {
-                        LOGGER.error("[{}] FOUND ERROR: {}", this.connector.getIdentifier(), e.getMessage());
-                        LOGGER.catching(e);
-                    }
-                }
-
-                if (!this.running) {
-                    return;
-                }
-                LOGGER.warn("[{}-{}] Connector stopped, restart in {} sec.",
-                            this.connector.getIdentifier(),
-                            hashCode(),
-                            this.restartInterval
-                );
-                try {
-                    Thread.sleep(this.restartInterval * 1000L);
-                } catch (InterruptedException e2) {
-                    throw new RuntimeException(e2);
-                }
-                LOGGER.info("[{}-{}] restarting connector thread.", this.connector.getIdentifier(), hashCode());
-            }
-        }
     }
 }

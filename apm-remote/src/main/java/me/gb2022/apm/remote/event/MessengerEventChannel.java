@@ -2,13 +2,13 @@ package me.gb2022.apm.remote.event;
 
 import io.netty.buffer.ByteBuf;
 import me.gb2022.apm.remote.RemoteMessenger;
+import me.gb2022.apm.remote.connector.ConnectorListener;
 import me.gb2022.apm.remote.connector.RemoteConnector;
 import me.gb2022.apm.remote.event.connector.ConnectorReadyEvent;
 import me.gb2022.apm.remote.event.connector.EndpointLoginResultEvent;
 import me.gb2022.apm.remote.event.message.RemoteMessageEvent;
 import me.gb2022.apm.remote.event.message.RemoteMessageSurpassEvent;
 import me.gb2022.apm.remote.event.message.RemoteQueryEvent;
-import me.gb2022.apm.remote.connector.ConnectorListener;
 
 import java.util.HashSet;
 import java.util.Set;
@@ -31,7 +31,7 @@ public final class MessengerEventChannel implements ConnectorListener {
             listener.remoteMessage(this.handle, pass);
         }
 
-        if(connector.verifyQueryResult(pid)){
+        if (connector.verifyQueryResult(pid)) {
             return;
         }
 
@@ -48,7 +48,7 @@ public final class MessengerEventChannel implements ConnectorListener {
 
     @Override
     public void onMessagePassed(RemoteConnector connector, String pid, String channel, String sender, String receiver, ByteBuf message) {
-        var event = new RemoteMessageSurpassEvent(this.handle.connector(), pid, channel, sender, message);
+        var event = new RemoteMessageSurpassEvent(this.handle.connector(), sender, pid, channel, message);
 
         for (var listener : this.listeners) {
             listener.messageSurpassed(this.handle, event);

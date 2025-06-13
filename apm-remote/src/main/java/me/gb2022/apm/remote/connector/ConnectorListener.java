@@ -24,6 +24,14 @@ public interface ConnectorListener {
 
     }
 
+    default void connectorStopped(RemoteConnector connector) {
+
+    }
+
+
+
+
+
     default void endpointLoginResult(RemoteConnector connector, boolean success, String message, String[] servers) {
 
     }

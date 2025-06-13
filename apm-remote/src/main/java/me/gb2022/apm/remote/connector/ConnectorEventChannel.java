@@ -44,6 +44,13 @@ public final class ConnectorEventChannel implements ConnectorListener {
     }
 
     @Override
+    public void connectorStopped(RemoteConnector connector) {
+        for (var listener : this.listeners) {
+            listener.connectorStopped(connector);
+        }
+    }
+
+    @Override
     public void endpointLoginResult(RemoteConnector connector, boolean success, String message, String[] servers) {
         for (var listener : this.listeners) {
             listener.endpointLoginResult(connector, success, message, servers);
